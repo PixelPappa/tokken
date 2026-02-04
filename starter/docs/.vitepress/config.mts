@@ -27,9 +27,34 @@ function ensureGitignore() {
   }
 }
 
+// Inline script that runs in <head> before Vue mounts.
+// If Vite's HMR reloads the page mid-sync and Vue fails to mount (white page),
+// this script shows a spinner overlay and polls until the server is ready.
+// If Vue DOES mount, the theme's enhanceApp cancels the timeout.
+const reloadRecoveryScript = `
+;(function(){
+  if(!sessionStorage.getItem('tokken-reloading'))return;
+  window.__tokkenReloadTimer=setTimeout(function(){
+    var s=document.createElement('style');
+    s.textContent='@keyframes _ts{to{transform:rotate(360deg)}}';
+    document.head.appendChild(s);
+    var el=document.createElement('div');
+    el.id='tokken-reload-overlay';
+    el.style.cssText='position:fixed;inset:0;z-index:999999;background:#1b1b1f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px';
+    el.innerHTML='<div style=\"width:36px;height:36px;border:3px solid rgba(255,255,255,0.1);border-top-color:#646cff;border-radius:50%;animation:_ts .8s linear infinite\"></div><div style=\"color:rgba(255,255,255,0.8);font-size:14px;font-family:system-ui,sans-serif\">Building your design system docs\\u2026</div>';
+    document.body.appendChild(el);
+    window.__tokkenPoll=setInterval(function(){
+      fetch('/',{cache:'no-store'}).then(function(r){
+        if(r.ok){clearInterval(window.__tokkenPoll);sessionStorage.removeItem('tokken-reloading');window.location.href=window.location.origin+'/'}
+      }).catch(function(){})
+    },1500)
+  },3000)
+})();`
+
 export default defineConfig({
   title: 'Tokken',
   description: 'Design tokens, extracted. Documentation, generated.',
+  head: [['script', {}, reloadRecoveryScript]],
   themeConfig: {
     nav: [],
     sidebar: [],

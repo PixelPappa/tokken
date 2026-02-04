@@ -58,6 +58,10 @@ async function submit() {
   syncLog.value = ''
   errorMessage.value = ''
 
+  // Persist flag so the recovery <head> script can pick it up
+  // even if Vite's HMR forces a page reload mid-sync.
+  sessionStorage.setItem('tokken-reloading', '1')
+
   try {
     const res = await fetch('/__tokken-setup', {
       method: 'POST',
@@ -85,6 +89,7 @@ async function submit() {
       startReloadPolling()
     } else if (syncLog.value.includes('[error]')) {
       status.value = 'error'
+      sessionStorage.removeItem('tokken-reloading')
     }
   } catch (err) {
     // VitePress restart kills the stream — this is the normal path.
@@ -97,6 +102,7 @@ async function submit() {
       startReloadPolling()
     } else {
       status.value = 'error'
+      sessionStorage.removeItem('tokken-reloading')
       errorMessage.value = err.message || 'Connection failed'
     }
   }

@@ -459,16 +459,19 @@ function genVitepressConfig(manifest, tokens, groups, hasIcons, hasColors, hasTy
     sidebarResources.push({ text: 'AI-Ready Spec', link: '/resources/ai-spec' });
   }
 
+  // Recovery script: survives Vite HMR page reloads via sessionStorage.
+  // If Vue doesn't mount within 3s (white page), shows overlay and polls.
+  const reloadScript = `;(function(){if(!sessionStorage.getItem('tokken-reloading'))return;window.__tokkenReloadTimer=setTimeout(function(){var s=document.createElement('style');s.textContent='@keyframes _ts{to{transform:rotate(360deg)}}';document.head.appendChild(s);var el=document.createElement('div');el.id='tokken-reload-overlay';el.style.cssText='position:fixed;inset:0;z-index:999999;background:#1b1b1f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px';el.innerHTML='<div style=\"width:36px;height:36px;border:3px solid rgba(255,255,255,0.1);border-top-color:#646cff;border-radius:50%;animation:_ts .8s linear infinite\"></div><div style=\"color:rgba(255,255,255,0.8);font-size:14px;font-family:system-ui,sans-serif\">Reloading with updated content\\\\u2026</div>';document.body.appendChild(el);window.__tokkenPoll=setInterval(function(){fetch('/',{cache:'no-store'}).then(function(r){if(r.ok){clearInterval(window.__tokkenPoll);sessionStorage.removeItem('tokken-reloading');window.location.href=window.location.origin+'/'}}).catch(function(){})},1500)},3000)})();`;
+
   const headTags = [];
+  headTags.push(`    ['script', {}, ${JSON.stringify(reloadScript)}]`);
   if (fontsLink) {
     headTags.push(`    ['link', { rel: 'preconnect', href: 'https://fonts.googleapis.com' }]`);
     headTags.push(`    ['link', { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' }]`);
     headTags.push(`    ['link', { rel: 'stylesheet', href: '${fontsLink}' }]`);
   }
 
-  const headSection = headTags.length > 0
-    ? `\n  head: [\n${headTags.join(',\n')}\n  ],\n`
-    : '';
+  const headSection = `\n  head: [\n${headTags.join(',\n')}\n  ],\n`;
 
   return `import { defineConfig } from 'vitepress'
 import { spawn } from 'node:child_process'
@@ -649,6 +652,15 @@ export default {
     app.component('TokenTable', TokenTable)
     app.component('TypographyPreview', TypographyPreview)
     app.component('BorderRadiusPreview', BorderRadiusPreview)
+
+    // Vue mounted — cancel the <head> recovery script
+    if (typeof window !== 'undefined') {
+      if ((window as any).__tokkenReloadTimer) {
+        clearTimeout((window as any).__tokkenReloadTimer);
+        (window as any).__tokkenReloadTimer = null
+      }
+      sessionStorage.removeItem('tokken-reloading')
+    }
   },
 } satisfies Theme
 `;
@@ -816,6 +828,7 @@ async function runSync() {
   syncLog.value = ''
   showLog.value = true
   syncStatus.value = ''
+  sessionStorage.setItem('tokken-reloading', '1')
 
   try {
     const res = await fetch('/__figma-sync', {
@@ -862,6 +875,7 @@ async function saveSettings() {
   settingsSyncing.value = true
   settingsLog.value = ''
   settingsStatus.value = ''
+  sessionStorage.setItem('tokken-reloading', '1')
 
   try {
     const res = await fetch('/__tokken-setup', {
