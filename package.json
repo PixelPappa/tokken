@@ -1,0 +1,42 @@
+{
+  "name": "tokken",
+  "version": "0.1.0",
+  "description": "Design tokens, extracted. Documentation, generated. Figma to VitePress in one command.",
+  "type": "module",
+  "main": "src/generate-site.mjs",
+  "bin": {
+    "tokken": "./bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/",
+    "LICENSE",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "extract": "tsx src/figma-extractor.ts"
+  },
+  "keywords": [
+    "figma",
+    "design-tokens",
+    "design-system",
+    "vitepress",
+    "documentation",
+    "css",
+    "tokens"
+  ],
+  "author": "",
+  "license": "AGPL-3.0",
+  "dependencies": {
+    "axios": "^1.6.7",
+    "dotenv": "^16.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.24",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
