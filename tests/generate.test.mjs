@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { contrastRatio } from '../src/colors.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,12 +116,17 @@ describe('generate-site integration', () => {
     assert.ok(fs.existsSync(path.join(outputDir, 'docs', '.vitepress', 'config.mts')));
   });
 
-  it('creates custom.css with brand variables', () => {
+  it('creates custom.css with brand variables in both light and dark mode', () => {
     const css = fs.readFileSync(
       path.join(outputDir, 'docs', '.vitepress', 'theme', 'custom.css'), 'utf-8'
     );
-    assert.ok(css.includes('--vp-c-brand-1'));
-    assert.ok(css.includes('--dad-accent'));
+    const darkIdx = css.indexOf('.dark');
+    const rootSection = css.substring(0, darkIdx);
+    const darkSection = css.substring(darkIdx);
+    assert.ok(rootSection.includes('--vp-c-brand-1'), 'root should have brand-1 for light mode');
+    assert.ok(darkSection.includes('--vp-c-brand-1'), 'dark should have brand-1 for dark mode');
+    assert.ok(rootSection.includes('--dad-accent'), 'root should have dad-accent');
+    assert.ok(darkSection.includes('--dad-accent'), 'dark should have dad-accent');
   });
 
   it('creates homepage with hero layout', () => {
@@ -201,26 +207,58 @@ describe('generate-site with --brand-color', () => {
     fs.rmSync(tmpDir2, { recursive: true, force: true });
   });
 
-  it('uses brand color as vp-c-brand-1', () => {
+  it('sets accessible dark-mode brand-1 against dark bg', () => {
     const css = fs.readFileSync(
       path.join(outputDir2, 'docs', '.vitepress', 'theme', 'custom.css'), 'utf-8'
     );
-    assert.ok(css.includes('--vp-c-brand-1: #FF6600'));
+    const darkIdx = css.indexOf('.dark');
+    const darkSection = css.substring(darkIdx);
+    const match = darkSection.match(/--vp-c-brand-1:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(match, 'dark brand-1 should exist');
+    const bgMatch = css.match(/--dad-bg:\s*(#[0-9a-fA-F]{6})/);
+    const bg = bgMatch ? bgMatch[1] : '#000000';
+    assert.ok(contrastRatio(match[1], bg) >= 4.5, 'dark brand-1 should meet WCAG AA against dark bg');
   });
 
-  it('uses brand color as dad-accent', () => {
+  it('sets accessible light-mode brand-1 against white', () => {
     const css = fs.readFileSync(
       path.join(outputDir2, 'docs', '.vitepress', 'theme', 'custom.css'), 'utf-8'
     );
-    assert.ok(css.includes('--dad-accent: #FF6600'));
+    const darkIdx = css.indexOf('.dark');
+    const rootSection = css.substring(0, darkIdx);
+    const match = rootSection.match(/--vp-c-brand-1:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(match, 'light brand-1 should exist');
+    assert.ok(contrastRatio(match[1], '#ffffff') >= 4.5, 'light brand-1 should meet WCAG AA against white');
   });
 
-  it('derives brand-2 darker than brand-1', () => {
+  it('sets matching dad-accent per mode', () => {
     const css = fs.readFileSync(
       path.join(outputDir2, 'docs', '.vitepress', 'theme', 'custom.css'), 'utf-8'
     );
-    const match = css.match(/--vp-c-brand-2:\s*([^;]+);/);
-    assert.ok(match, 'brand-2 variable should exist');
-    assert.notStrictEqual(match[1].trim(), '#FF6600', 'brand-2 should differ from brand-1');
+    const darkIdx = css.indexOf('.dark');
+    const rootSection = css.substring(0, darkIdx);
+    const darkSection = css.substring(darkIdx);
+    // Light mode: dad-accent matches light brand-1
+    const lightBrand = rootSection.match(/--vp-c-brand-1:\s*(#[0-9a-fA-F]{6})/);
+    const lightAccent = rootSection.match(/--dad-accent:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(lightBrand && lightAccent);
+    assert.strictEqual(lightBrand[1], lightAccent[1], 'light dad-accent should match light brand-1');
+    // Dark mode: dad-accent matches dark brand-1
+    const darkBrand = darkSection.match(/--vp-c-brand-1:\s*(#[0-9a-fA-F]{6})/);
+    const darkAccent = darkSection.match(/--dad-accent:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(darkBrand && darkAccent);
+    assert.strictEqual(darkBrand[1], darkAccent[1], 'dark dad-accent should match dark brand-1');
+  });
+
+  it('derives brand-2 darker than brand-1 in dark mode', () => {
+    const css = fs.readFileSync(
+      path.join(outputDir2, 'docs', '.vitepress', 'theme', 'custom.css'), 'utf-8'
+    );
+    const darkIdx = css.indexOf('.dark');
+    const darkSection = css.substring(darkIdx);
+    const brand1Match = darkSection.match(/--vp-c-brand-1:\s*(#[0-9a-fA-F]{6})/);
+    const brand2Match = darkSection.match(/--vp-c-brand-2:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(brand1Match && brand2Match);
+    assert.notStrictEqual(brand2Match[1], brand1Match[1], 'brand-2 should differ from brand-1');
   });
 });

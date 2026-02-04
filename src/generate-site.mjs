@@ -131,7 +131,7 @@ function componentImageSlug(name) {
 // 4. Color / luminance utilities (from src/colors.mjs)
 // ============================================================================
 
-import { hexToRgb, luminance, saturation, lighten } from './colors.mjs';
+import { hexToRgb, luminance, saturation, lighten, adjustBrandForContrast, brandColors, patchBrandCSS } from './colors.mjs';
 
 function rgbaToCSS(color, opacity) {
   if (!color) return 'rgba(0,0,0,0.25)';
@@ -257,6 +257,8 @@ function deriveTheme(tokens, brandColor) {
   const rawColors = tokens.colors || {};
   const hexes = Object.keys(rawColors);
 
+  const fallbackAccent = '#d0bcfe';
+  const fallbackLightBrand = brandColors(fallbackAccent, '#ffffff');
   const fallback = {
     bg: '#141218',
     bgSurface: '#1d1b20',
@@ -266,14 +268,20 @@ function deriveTheme(tokens, brandColor) {
     textPrimary: '#e6e0e9',
     textSecondary: '#cac4d0',
     textMuted: '#938f99',
-    accent: '#d0bcfe',
+    accent: fallbackAccent,
     accentDark: '#381e72',
     border: '#49454f',
     success: '#a8db8f',
-    vpBrand1: '#d0bcfe',
+    vpBrand1: fallbackAccent,
     vpBrand2: '#b69df8',
     vpBrand3: '#9a82db',
     vpBrandSoft: 'rgba(208, 188, 254, 0.14)',
+    vpBrand1Light: fallbackLightBrand.brand1,
+    vpBrand2Light: fallbackLightBrand.brand2,
+    vpBrand3Light: fallbackLightBrand.brand3,
+    vpBrandSoftLight: fallbackLightBrand.brandSoft,
+    accentLight: fallbackLightBrand.brand1,
+    accentDarkLight: fallbackLightBrand.brand3,
   };
 
   if (hexes.length < 3) return fallback;
@@ -309,6 +317,15 @@ function deriveTheme(tokens, brandColor) {
     accent = brandColor;
   }
 
+  // Keep raw accent before mode-specific adjustments
+  const rawAccent = accent;
+
+  // Ensure accent meets WCAG AA contrast against the dark background
+  accent = adjustBrandForContrast(rawAccent, darkest);
+
+  // Derive light-mode brand: adjust for white background
+  const lightBrand = brandColors(rawAccent, '#ffffff');
+
   // Derive surface colors from darkest
   const darkRgb = hexToRgb(darkest);
 
@@ -329,6 +346,13 @@ function deriveTheme(tokens, brandColor) {
     vpBrand2: lighten(hexToRgb(accent), -20),
     vpBrand3: lighten(hexToRgb(accent), -40),
     vpBrandSoft: `rgba(${hexToRgb(accent).r}, ${hexToRgb(accent).g}, ${hexToRgb(accent).b}, 0.14)`,
+    // Light-mode brand variants (adjusted for white background)
+    vpBrand1Light: lightBrand.brand1,
+    vpBrand2Light: lightBrand.brand2,
+    vpBrand3Light: lightBrand.brand3,
+    vpBrandSoftLight: lightBrand.brandSoft,
+    accentLight: lightBrand.brand1,
+    accentDarkLight: lightBrand.brand3,
   };
 }
 
@@ -453,6 +477,7 @@ import { spawn } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileSync, existsSync, readFileSync, appendFileSync } from 'node:fs'
+import { patchBrandCSS } from './brand-utils.mjs'
 
 const __configDir = dirname(fileURLToPath(import.meta.url))
 const projectDir = resolve(__configDir, '../..')
@@ -616,25 +641,9 @@ export default defineConfig({
                 // Config-only change (e.g. brand color): patch CSS directly — no restart needed
                 const cssPath = resolve(projectDir, 'docs/.vitepress/theme/custom.css')
                 if (brandColor && /^#[0-9a-fA-F]{6}$/.test(brandColor) && existsSync(cssPath)) {
-                  write('[update] Updating brand color...')
-                  const hex = brandColor.replace('#', '')
-                  const n = parseInt(hex, 16)
-                  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
-                  const shift = (amt: number) => '#' + [
-                    Math.max(0, Math.min(255, Math.round(r + amt))),
-                    Math.max(0, Math.min(255, Math.round(g + amt))),
-                    Math.max(0, Math.min(255, Math.round(b + amt))),
-                  ].map((v: number) => v.toString(16).padStart(2, '0')).join('')
-                  const brand2 = shift(-20)
-                  const brand3 = shift(-40)
-                  const brandSoft = \`rgba(\${r}, \${g}, \${b}, 0.14)\`
+                  write('[update] Updating brand color (auto-adjusting for accessibility)...')
                   let css = readFileSync(cssPath, 'utf-8')
-                  css = css.replace(/--vp-c-brand-1:[^;]+;/, \`--vp-c-brand-1: \${brandColor};\`)
-                  css = css.replace(/--vp-c-brand-2:[^;]+;/, \`--vp-c-brand-2: \${brand2};\`)
-                  css = css.replace(/--vp-c-brand-3:[^;]+;/, \`--vp-c-brand-3: \${brand3};\`)
-                  css = css.replace(/--vp-c-brand-soft:[^;]+;/, \`--vp-c-brand-soft: \${brandSoft};\`)
-                  css = css.replace(/--dad-accent:[^;]+;/, \`--dad-accent: \${brandColor};\`)
-                  css = css.replace(/--dad-accent-dark:[^;]+;/, \`--dad-accent-dark: \${brand3};\`)
+                  css = patchBrandCSS(css, brandColor)
                   writeFileSync(cssPath, css)
                   write('[done] Brand color updated!')
                 } else {
@@ -643,8 +652,8 @@ export default defineConfig({
                 res.end()
               }
             } catch (err: any) {
-              res.setHeader('Content-Type', 'text/plain')
-              res.write(\`[error] \${err.message}\\n\`)
+              try { res.setHeader('Content-Type', 'text/plain') } catch {}
+              try { res.write(\`[error] \${err.message}\\n\`) } catch {}
               res.end()
             }
           })
@@ -714,10 +723,15 @@ function genCustomCSS(theme, fontFamilies) {
   --dad-text-primary: ${theme.textPrimary};
   --dad-text-secondary: ${theme.textSecondary};
   --dad-text-muted: ${theme.textMuted};
-  --dad-accent: ${theme.accent};
-  --dad-accent-dark: ${theme.accentDark};
+  --dad-accent: ${theme.accentLight};
+  --dad-accent-dark: ${theme.accentDarkLight};
   --dad-border: ${theme.border};
   --dad-success: ${theme.success};
+  /* Light-mode brand colors (accessible on white) */
+  --vp-c-brand-1: ${theme.vpBrand1Light};
+  --vp-c-brand-2: ${theme.vpBrand2Light};
+  --vp-c-brand-3: ${theme.vpBrand3Light};
+  --vp-c-brand-soft: ${theme.vpBrandSoftLight};
 }
 
 .dark {
@@ -729,6 +743,8 @@ function genCustomCSS(theme, fontFamilies) {
   --vp-c-text-2: ${theme.textSecondary};
   --vp-c-text-3: ${theme.textMuted};
   --vp-c-divider: ${theme.border};
+  --dad-accent: ${theme.accent};
+  --dad-accent-dark: ${theme.accentDark};
   --vp-c-brand-1: ${theme.vpBrand1};
   --vp-c-brand-2: ${theme.vpBrand2};
   --vp-c-brand-3: ${theme.vpBrand3};
@@ -2770,6 +2786,10 @@ function main() {
     path.join(vpDir, 'config.mts'),
     genVitepressConfig(manifest, tokens, groups, hasIcons, hasColors, hasTypography, hasEffects, fontFamilies, outputDir, true)
   );
+
+  // 2b. .vitepress/brand-utils.mjs (color utilities for live brand patching)
+  const colorsSource = fs.readFileSync(path.join(__dirname, 'colors.mjs'), 'utf-8');
+  writeFile(path.join(vpDir, 'brand-utils.mjs'), colorsSource);
 
   // 3. theme/index.ts
   writeFile(path.join(themeDir, 'index.ts'), genThemeIndex());
