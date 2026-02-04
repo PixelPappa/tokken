@@ -1,5 +1,5 @@
 {
-  "name": "tokken",
+  "name": "gettokken",
   "version": "0.1.0",
   "description": "Design tokens, extracted. Documentation, generated. Figma to VitePress in one command.",
   "type": "module",
