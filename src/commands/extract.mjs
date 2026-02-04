@@ -47,7 +47,7 @@ async function run() {
 
   const figmaUrl = cliArgs.url || config.figmaUrl;
   const accessToken = resolveToken(cliArgs.token);
-  const outputDir = cliArgs.output || config.outputDir || '.';
+  const outputDir = cliArgs.output || '.tokken';
 
   if (!figmaUrl) {
     console.error('Error: No Figma URL provided.\n');

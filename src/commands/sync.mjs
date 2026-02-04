@@ -46,7 +46,7 @@ async function run() {
 
   const figmaUrl = cliArgs.url || config.figmaUrl;
   const accessToken = resolveToken(cliArgs.token);
-  const outputDir = cliArgs.output || config.outputDir || '.';
+  const projectDir = cliArgs.output || config.outputDir || '.';
   const brandColor = config.brandColor || null;
 
   if (!figmaUrl) {
@@ -61,6 +61,10 @@ async function run() {
     process.exit(1);
   }
 
+  // Extract to .tokken/ within the project directory
+  const resolvedProject = path.resolve(projectDir);
+  const extractDir = path.join(resolvedProject, '.tokken');
+
   // --- Step 1: Extract ---
   console.log('=== Step 1: Extracting from Figma ===\n');
 
@@ -68,12 +72,11 @@ async function run() {
   const { default: FigmaExtractor } = await import(extractorPath);
 
   const fileKey = FigmaExtractor.extractFileKey(figmaUrl);
-  const resolvedOutput = path.resolve(outputDir);
 
   const extractor = new FigmaExtractor({
     accessToken,
     fileKey,
-    outputDir: resolvedOutput,
+    outputDir: extractDir,
     figmaUrl,
   });
 
@@ -84,8 +87,8 @@ async function run() {
 
   const fakeArgv = [
     'node', 'generate-site.mjs',
-    '--input', resolvedOutput,
-    '--output', resolvedOutput,
+    '--input', extractDir,
+    '--output', resolvedProject,
   ];
   if (brandColor) {
     fakeArgv.push('--brand-color', brandColor);

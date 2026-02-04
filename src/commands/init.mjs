@@ -21,15 +21,19 @@ function ask(rl, question) {
 
 function ensureGitignore() {
   const gitignorePath = '.gitignore';
+  const entries = ['.env', '.tokken/'];
+
   if (fs.existsSync(gitignorePath)) {
     const content = fs.readFileSync(gitignorePath, 'utf-8');
-    if (!content.split('\n').some((line) => line.trim() === '.env')) {
-      fs.appendFileSync(gitignorePath, '\n.env\n');
-      console.log('  Updated .gitignore to include .env');
+    const lines = content.split('\n').map((l) => l.trim());
+    const missing = entries.filter((e) => !lines.includes(e));
+    if (missing.length) {
+      fs.appendFileSync(gitignorePath, '\n' + missing.join('\n') + '\n');
+      console.log(`  Updated .gitignore to include ${missing.join(', ')}`);
     }
   } else {
-    fs.writeFileSync(gitignorePath, '.env\nnode_modules/\n');
-    console.log('  Created .gitignore with .env');
+    fs.writeFileSync(gitignorePath, entries.join('\n') + '\nnode_modules/\n');
+    console.log('  Created .gitignore');
   }
 }
 

@@ -45,7 +45,7 @@ async function run() {
   const cliArgs = parseGenerateArgs();
 
   const outputDir = cliArgs.output || config.outputDir || '.';
-  const inputDir = cliArgs.input || config.outputDir || '.';
+  const inputDir = cliArgs.input || '.tokken';
   const brandColor = cliArgs.brandColor || config.brandColor || null;
 
   // Check that extraction output exists
