@@ -474,9 +474,15 @@ function genVitepressConfig(manifest, tokens, groups, hasIcons, hasColors, hasTy
 import { spawn } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeFileSync, existsSync, readFileSync, appendFileSync } from 'node:fs'
 
 const __configDir = dirname(fileURLToPath(import.meta.url))
 const projectDir = resolve(__configDir, '../..')
+
+function isLocalhost(req: any): boolean {
+  const addr = req.socket?.remoteAddress
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1'
+}
 
 export default defineConfig({
   title: '${fileName.replace(/'/g, "\\'")}',
@@ -540,6 +546,69 @@ export default defineConfig({
               write(code === 0 ? '[done] Sync complete!' : \`[error] Sync failed (exit code \${code})\`)
               res.end()
             })
+          })
+        })
+
+        // Settings endpoint: update token/URL/brandColor
+        server.middlewares.use('/__tokken-setup', (req: any, res: any, next: any) => {
+          if (req.method !== 'POST') return next()
+          if (!isLocalhost(req)) {
+            res.statusCode = 403
+            res.end('Forbidden: setup endpoint is only available from localhost')
+            return
+          }
+
+          let body = ''
+          req.on('data', (c: Buffer) => body += c)
+          req.on('end', () => {
+            try {
+              const { token, url, brandColor } = JSON.parse(body)
+              res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+              res.setHeader('Cache-Control', 'no-cache')
+              const write = (text: string) => { try { res.write(text + '\\n') } catch {} }
+
+              if (!token || !url) {
+                write('[error] Token and URL are required')
+                res.end()
+                return
+              }
+
+              write('[setup] Saving Figma token...')
+              writeFileSync(resolve(projectDir, '.env'), \`FIGMA_ACCESS_TOKEN=\${token}\\n\`)
+
+              write('[setup] Saving configuration...')
+              const config: any = { figmaUrl: url, outputDir: '.' }
+              if (brandColor && /^#[0-9a-fA-F]{6}$/.test(brandColor)) {
+                config.brandColor = brandColor
+              }
+              writeFileSync(resolve(projectDir, 'tokken.config.json'), JSON.stringify(config, null, 2) + '\\n')
+
+              const gitignorePath = resolve(projectDir, '.gitignore')
+              const gitEntries = ['.env', '.tokken/', 'node_modules/']
+              if (existsSync(gitignorePath)) {
+                const content = readFileSync(gitignorePath, 'utf-8')
+                const lines = content.split('\\n').map((l: string) => l.trim())
+                const missing = gitEntries.filter((e: string) => !lines.includes(e))
+                if (missing.length) appendFileSync(gitignorePath, '\\n' + missing.join('\\n') + '\\n')
+              } else {
+                writeFileSync(gitignorePath, gitEntries.join('\\n') + '\\n')
+              }
+
+              write('[sync] Starting extraction from Figma...\\n')
+              const sync = spawn('npx', ['tokken', 'sync', url, '--output', projectDir], {
+                cwd: projectDir, env: { ...process.env, FIGMA_ACCESS_TOKEN: token }, shell: true
+              })
+              sync.stdout.on('data', (d: Buffer) => write(d.toString().trimEnd()))
+              sync.stderr.on('data', (d: Buffer) => write(d.toString().trimEnd()))
+              sync.on('close', (code: number) => {
+                write(code === 0 ? '\\n[done] Sync complete!' : \`\\n[error] Sync failed (exit code \${code})\`)
+                res.end()
+              })
+            } catch (err: any) {
+              res.setHeader('Content-Type', 'text/plain')
+              res.write(\`[error] \${err.message}\\n\`)
+              res.end()
+            }
           })
         })
       }
@@ -626,7 +695,7 @@ function genCustomCSS(theme, fontFamilies) {
 }
 
 // ---------- docs/index.md (home page) ----------
-function genHomePage(manifest, tokens, groups, iconCount, hasEffects) {
+function genHomePage(manifest, tokens, groups, iconCount, hasEffects, brandColor) {
   const fileName = manifest.fileName || 'Design System';
   const counts = manifest.counts || {};
 
@@ -689,6 +758,15 @@ const syncing = ref(false)
 const syncLog = ref('')
 const showLog = ref(false)
 const syncStatus = ref('')
+
+// Settings
+const showSettings = ref(false)
+const settingsToken = ref('')
+const settingsUrl = ref(defaultUrl)
+const settingsBrandColor = ref('${brandColor || ''}')
+const settingsSyncing = ref(false)
+const settingsLog = ref('')
+const settingsStatus = ref('')
 
 const isModified = computed(() => figmaUrl.value !== defaultUrl)
 
@@ -776,6 +854,52 @@ async function runSync() {
     syncing.value = false
   }
 }
+
+async function saveSettings() {
+  if (!settingsToken.value.trim() || !settingsUrl.value.trim()) return
+  settingsSyncing.value = true
+  settingsLog.value = ''
+  settingsStatus.value = ''
+
+  try {
+    const res = await fetch('/__tokken-setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: settingsToken.value.trim(),
+        url: settingsUrl.value.trim(),
+        brandColor: settingsBrandColor.value.trim() || undefined
+      })
+    })
+
+    if (!res.ok) throw new Error('Server returned ' + res.status)
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      settingsLog.value += decoder.decode(value)
+    }
+
+    if (settingsLog.value.includes('[done]')) {
+      settingsStatus.value = 'done'
+      await waitForServer()
+    } else if (settingsLog.value.includes('[error]')) {
+      settingsStatus.value = 'error'
+    }
+  } catch (err) {
+    if (settingsLog.value.includes('Extraction complete')) {
+      settingsStatus.value = 'done'
+      await waitForServer()
+    } else {
+      settingsStatus.value = 'error'
+      settingsLog.value += '\\n[error] ' + (err.message || 'Connection failed')
+    }
+  } finally {
+    settingsSyncing.value = false
+  }
+}
 </script>
 
 <div class="home-downloads">
@@ -827,6 +951,42 @@ async function runSync() {
     <pre v-else class="sync-log-output">{{ syncLog || 'Starting...' }}</pre>
     <div v-if="syncStatus === 'done'" class="sync-status sync-done">Reloading with updated content...</div>
     <div v-if="syncStatus === 'error'" class="sync-status sync-error">Sync failed. Check the log above.</div>
+  </div>
+</div>
+
+<div class="settings-section">
+  <button class="settings-toggle" @click="showSettings = !showSettings">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    Settings
+    <span class="settings-chevron" :class="{ open: showSettings }">&#9656;</span>
+  </button>
+
+  <div v-if="showSettings" class="settings-form">
+    <div class="settings-field">
+      <label>Figma Access Token</label>
+      <input v-model="settingsToken" type="password" placeholder="Paste new token..." class="settings-input" :disabled="settingsSyncing" />
+      <div class="settings-hint">Tokens expire every 90 days. Get a new one at <a href="https://www.figma.com/developers/api#access-tokens" target="_blank">figma.com/developers</a>.</div>
+    </div>
+    <div class="settings-field">
+      <label>Figma File URL</label>
+      <input v-model="settingsUrl" type="url" class="settings-input" :disabled="settingsSyncing" />
+    </div>
+    <div class="settings-field">
+      <label>Brand Color <span style="font-weight:400;color:var(--vp-c-text-3)">(optional)</span></label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input v-model="settingsBrandColor" type="text" placeholder="#6164F0" class="settings-input" style="flex:1" :disabled="settingsSyncing" />
+        <div v-if="settingsBrandColor && /^#[0-9a-fA-F]{6}$/.test(settingsBrandColor)" :style="{ background: settingsBrandColor, width: '32px', height: '32px', borderRadius: '6px', border: '1px solid var(--vp-c-divider)', flexShrink: 0 }"></div>
+      </div>
+    </div>
+    <button class="settings-save" @click="saveSettings" :disabled="!settingsToken.trim() || !settingsUrl.trim() || settingsSyncing">
+      {{ settingsSyncing ? 'Saving & Syncing...' : 'Save & Re-sync' }}
+    </button>
+
+    <div v-if="settingsLog" class="settings-log">
+      <pre class="settings-log-output">{{ settingsLog }}</pre>
+      <div v-if="settingsStatus === 'done'" class="sync-status sync-done">Reloading with updated content...</div>
+      <div v-if="settingsStatus === 'error'" class="sync-status sync-error">Something went wrong. Check the log above.</div>
+    </div>
   </div>
 </div>
 
@@ -1020,6 +1180,118 @@ async function runSync() {
 }
 .sync-done { background: #0a3d1f; color: #4ade80; }
 .sync-error { background: #3d0a0a; color: #f87171; }
+.settings-section {
+  max-width: 1152px;
+  margin: 32px auto 0;
+  padding: 0 24px;
+}
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--vp-c-text-3);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 0;
+  transition: color 0.15s;
+}
+.settings-toggle:hover {
+  color: var(--vp-c-text-1);
+}
+.settings-toggle svg {
+  opacity: 0.6;
+}
+.settings-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 11px;
+}
+.settings-chevron.open {
+  transform: rotate(90deg);
+}
+.settings-form {
+  margin-top: 8px;
+  padding: 20px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+}
+.settings-field {
+  margin-bottom: 16px;
+}
+.settings-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+  margin-bottom: 6px;
+}
+.settings-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  color: var(--vp-c-text-1);
+  box-sizing: border-box;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--vp-c-brand-1);
+}
+.settings-input:disabled {
+  opacity: 0.6;
+}
+.settings-hint {
+  font-size: 12px;
+  color: var(--vp-c-text-3);
+  margin-top: 4px;
+}
+.settings-hint a {
+  color: var(--vp-c-brand-1);
+}
+.settings-save {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--vp-c-white);
+  background: var(--vp-c-brand-1);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.settings-save:hover {
+  background: var(--vp-c-brand-2);
+}
+.settings-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.settings-log {
+  margin-top: 16px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-log-output {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+}
 </style>
 `;
 }
@@ -2453,7 +2725,7 @@ function main() {
   // 5. docs/index.md
   writeFile(
     path.join(docsDir, 'index.md'),
-    genHomePage(manifest, tokens, groups, Object.keys(tokens.iconSvgs || {}).length, hasEffects)
+    genHomePage(manifest, tokens, groups, Object.keys(tokens.iconSvgs || {}).length, hasEffects, opts.brandColor)
   );
 
   // 6. docs/getting-started.md

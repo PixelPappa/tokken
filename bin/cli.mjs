@@ -25,7 +25,7 @@ if (!command || command === '--help' || command === '-h' || !commands.includes(c
   Usage: tokken <command>
 
   Commands:
-    init        Interactive setup wizard
+    init        Scaffold starter site
     extract     Extract design tokens from Figma
     generate    Generate VitePress documentation site
     dev         Start VitePress dev server
@@ -36,7 +36,7 @@ if (!command || command === '--help' || command === '-h' || !commands.includes(c
     --version   Show version
     --help      Show this help
 
-  Run "tokken init" to get started.
+  Run "tokken init" then "tokken dev" to get started.
   `);
   process.exit(0);
 }

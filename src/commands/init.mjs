@@ -1,136 +1,84 @@
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
-import axios from 'axios';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { copyDirRecursive, ensureGitignore } from '../utils.mjs';
 
-const CONFIG_FILE = 'tokken.config.json';
-const ENV_FILE = '.env';
-
-function createInterface() {
-  return readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-}
-
-function ask(rl, question) {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => resolve(answer.trim()));
-  });
-}
-
-function ensureGitignore() {
-  const gitignorePath = '.gitignore';
-  const entries = ['.env', '.tokken/'];
-
-  if (fs.existsSync(gitignorePath)) {
-    const content = fs.readFileSync(gitignorePath, 'utf-8');
-    const lines = content.split('\n').map((l) => l.trim());
-    const missing = entries.filter((e) => !lines.includes(e));
-    if (missing.length) {
-      fs.appendFileSync(gitignorePath, '\n' + missing.join('\n') + '\n');
-      console.log(`  Updated .gitignore to include ${missing.join(', ')}`);
-    }
-  } else {
-    fs.writeFileSync(gitignorePath, entries.join('\n') + '\nnode_modules/\n');
-    console.log('  Created .gitignore');
-  }
-}
-
-async function testToken(token) {
-  try {
-    const res = await axios.get('https://api.figma.com/v1/me', {
-      headers: { 'X-Figma-Token': token },
-    });
-    return res.data;
-  } catch (err) {
-    return null;
-  }
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function run() {
   console.log('\n  tokken — Design tokens, extracted. Documentation, generated.\n');
+  console.log('  Scaffolding starter site...\n');
 
-  const rl = createInterface();
-  const existingConfig = fs.existsSync(CONFIG_FILE);
+  const starterDir = path.join(__dirname, '..', '..', 'starter');
 
-  let config = {};
-  if (existingConfig) {
-    config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    console.log(`  Found existing ${CONFIG_FILE}`);
-    if (config.figmaUrl) console.log(`  Figma URL: ${config.figmaUrl}`);
-    if (config.brandColor) console.log(`  Brand color: ${config.brandColor}`);
-    console.log('');
-  }
-
-  // --- Token ---
-  const token = await ask(rl, '  Figma personal access token: ');
-
-  if (!token) {
-    console.log('\n  No token provided. Get one at: https://www.figma.com/settings\n');
-    rl.close();
+  if (!fs.existsSync(starterDir)) {
+    console.error('  Error: Starter template not found. Reinstall gettokken.\n');
     process.exit(1);
   }
 
-  console.log('  Testing connection...');
-  const user = await testToken(token);
+  // Copy starter template to current directory (skip existing files)
+  const entries = fs.readdirSync(starterDir, { withFileTypes: true });
+  let created = 0;
+  let skipped = 0;
 
-  if (!user) {
-    console.log('\n  Invalid token. Check it and try again.\n');
-    rl.close();
-    process.exit(1);
-  }
+  for (const entry of entries) {
+    const srcPath = path.join(starterDir, entry.name);
+    const destPath = path.join(process.cwd(), entry.name);
 
-  console.log(`  Connected as: ${user.handle} (${user.email})\n`);
-
-  // --- Figma URL (skip if already configured) ---
-  if (!config.figmaUrl) {
-    const url = await ask(rl, '  Figma file URL: ');
-    if (url) {
-      config.figmaUrl = url;
+    if (entry.isDirectory()) {
+      const before = countFiles(destPath);
+      copyDirRecursive(srcPath, destPath);
+      const after = countFiles(destPath);
+      created += after - before;
+    } else if (!fs.existsSync(destPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`  created ${entry.name}`);
+      created++;
+    } else {
+      skipped++;
     }
   }
 
-  // --- Brand color (skip if already configured) ---
-  if (!config.brandColor) {
-    const color = await ask(
-      rl,
-      '  Brand color (hex, e.g. #6164F0, or press Enter to auto-derive): '
-    );
-    if (color && /^#[0-9a-fA-F]{6}$/.test(color)) {
-      config.brandColor = color;
-    }
+  if (created > 0) {
+    console.log(`  ${created} file(s) created`);
+  }
+  if (skipped > 0) {
+    console.log(`  ${skipped} file(s) skipped (already exist)`);
   }
 
-  // --- Output directory ---
-  if (!config.outputDir) {
-    config.outputDir = '.';
-  }
-
-  rl.close();
-
-  // --- Write config file ---
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
-  console.log(`  Created ${CONFIG_FILE}`);
-
-  // --- Write .env ---
-  fs.writeFileSync(ENV_FILE, `FIGMA_ACCESS_TOKEN=${token}\n`);
-  console.log(`  Created ${ENV_FILE}`);
-
-  // --- Ensure .gitignore ---
+  // Ensure .gitignore
   ensureGitignore();
 
+  // Install dependencies if needed
+  if (!fs.existsSync('node_modules')) {
+    console.log('\n  Installing dependencies...\n');
+    execSync('npm install', { stdio: 'inherit' });
+  }
+
   console.log(`
-  Setup complete! Next steps:
+  Ready! Next step:
 
-    tokken extract     Extract design tokens from Figma
-    tokken generate    Generate documentation site
-    tokken dev         Start dev server
+    tokken dev
 
-  Or run everything at once:
-
-    tokken sync
+  This starts a dev server where you can connect
+  your Figma file and generate your design system.
   `);
+}
+
+function countFiles(dir) {
+  if (!fs.existsSync(dir)) return 0;
+  let count = 0;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      count += countFiles(path.join(dir, entry.name));
+    } else {
+      count++;
+    }
+  }
+  return count;
 }
 
 run().catch((err) => {

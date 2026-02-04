@@ -1,6 +1,6 @@
 {
   "name": "gettokken",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Design tokens, extracted. Documentation, generated. Figma to VitePress in one command.",
   "type": "module",
   "main": "src/generate-site.mjs",
@@ -11,6 +11,7 @@
     "bin/",
     "src/",
     "dist/",
+    "starter/",
     "templates/",
     "LICENSE",
     "README.md",
