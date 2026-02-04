@@ -128,28 +128,10 @@ function componentImageSlug(name) {
 }
 
 // ============================================================================
-// 4. Color / luminance utilities
+// 4. Color / luminance utilities (from src/colors.mjs)
 // ============================================================================
 
-function hexToRgb(hex) {
-  hex = hex.replace('#', '');
-  if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-  const n = parseInt(hex, 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-
-function luminance(hex) {
-  const { r, g, b } = hexToRgb(hex);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-}
-
-function saturation(hex) {
-  const { r, g, b } = hexToRgb(hex);
-  const max = Math.max(r, g, b) / 255;
-  const min = Math.min(r, g, b) / 255;
-  if (max === 0) return 0;
-  return (max - min) / max;
-}
+import { hexToRgb, luminance, saturation, lighten } from './colors.mjs';
 
 function rgbaToCSS(color, opacity) {
   if (!color) return 'rgba(0,0,0,0.25)';
@@ -329,13 +311,6 @@ function deriveTheme(tokens, brandColor) {
 
   // Derive surface colors from darkest
   const darkRgb = hexToRgb(darkest);
-  const lighten = (rgb, amount) => {
-    return '#' + [
-      Math.max(0, Math.min(255, Math.round(rgb.r + amount))),
-      Math.max(0, Math.min(255, Math.round(rgb.g + amount))),
-      Math.max(0, Math.min(255, Math.round(rgb.b + amount))),
-    ].map(v => v.toString(16).padStart(2, '0')).join('');
-  };
 
   return {
     bg: darkest,
@@ -565,26 +540,40 @@ export default defineConfig({
           req.on('data', (c: Buffer) => body += c)
           req.on('end', () => {
             try {
-              const { token, url, brandColor } = JSON.parse(body)
+              const { token: newToken, url, brandColor } = JSON.parse(body)
               res.setHeader('Content-Type', 'text/plain; charset=utf-8')
               res.setHeader('Cache-Control', 'no-cache')
               const write = (text: string) => { try { res.write(text + '\\n') } catch {} }
 
-              if (!token || !url) {
-                write('[error] Token and URL are required')
+              if (!url) {
+                write('[error] Figma URL is required')
                 res.end()
                 return
               }
 
-              write('[setup] Saving Figma token...')
-              writeFileSync(resolve(projectDir, '.env'), \`FIGMA_ACCESS_TOKEN=\${token}\\n\`)
+              // Read existing config to detect what changed
+              const configPath = resolve(projectDir, 'tokken.config.json')
+              let existingConfig: any = {}
+              if (existsSync(configPath)) {
+                try { existingConfig = JSON.parse(readFileSync(configPath, 'utf-8')) } catch {}
+              }
 
+              const urlChanged = existingConfig.figmaUrl !== url
+              const needsSync = newToken || urlChanged
+
+              // Save new token if provided
+              if (newToken) {
+                write('[setup] Saving Figma token...')
+                writeFileSync(resolve(projectDir, '.env'), \`FIGMA_ACCESS_TOKEN=\${newToken}\\n\`)
+              }
+
+              // Update config
               write('[setup] Saving configuration...')
               const config: any = { figmaUrl: url, outputDir: '.' }
               if (brandColor && /^#[0-9a-fA-F]{6}$/.test(brandColor)) {
                 config.brandColor = brandColor
               }
-              writeFileSync(resolve(projectDir, 'tokken.config.json'), JSON.stringify(config, null, 2) + '\\n')
+              writeFileSync(configPath, JSON.stringify(config, null, 2) + '\\n')
 
               const gitignorePath = resolve(projectDir, '.gitignore')
               const gitEntries = ['.env', '.tokken/', 'node_modules/']
@@ -597,16 +586,62 @@ export default defineConfig({
                 writeFileSync(gitignorePath, gitEntries.join('\\n') + '\\n')
               }
 
-              write('[sync] Starting extraction from Figma...\\n')
-              const sync = spawn('npx', ['tokken', 'sync', url, '--output', projectDir], {
-                cwd: projectDir, env: { ...process.env, FIGMA_ACCESS_TOKEN: token }, shell: true
-              })
-              sync.stdout.on('data', (d: Buffer) => write(d.toString().trimEnd()))
-              sync.stderr.on('data', (d: Buffer) => write(d.toString().trimEnd()))
-              sync.on('close', (code: number) => {
-                write(code === 0 ? '\\n[done] Sync complete!' : \`\\n[error] Sync failed (exit code \${code})\`)
+              if (needsSync) {
+                // Full sync: extract from Figma + generate
+                let token = newToken
+                if (!token) {
+                  const envPath = resolve(projectDir, '.env')
+                  if (existsSync(envPath)) {
+                    const envContent = readFileSync(envPath, 'utf-8')
+                    const match = envContent.match(/FIGMA_ACCESS_TOKEN=(.+)/)
+                    if (match) token = match[1].trim()
+                  }
+                }
+                if (!token) {
+                  write('[error] No Figma token found. Enter a token above.')
+                  res.end()
+                  return
+                }
+                write('[sync] Starting extraction from Figma...\\n')
+                const sync = spawn('npx', ['tokken', 'sync', url, '--output', projectDir], {
+                  cwd: projectDir, env: { ...process.env, FIGMA_ACCESS_TOKEN: token }, shell: true
+                })
+                sync.stdout.on('data', (d: Buffer) => write(d.toString().trimEnd()))
+                sync.stderr.on('data', (d: Buffer) => write(d.toString().trimEnd()))
+                sync.on('close', (code: number) => {
+                  write(code === 0 ? '\\n[done] Sync complete!' : \`\\n[error] Sync failed (exit code \${code})\`)
+                  res.end()
+                })
+              } else {
+                // Config-only change (e.g. brand color): patch CSS directly — no restart needed
+                const cssPath = resolve(projectDir, 'docs/.vitepress/theme/custom.css')
+                if (brandColor && /^#[0-9a-fA-F]{6}$/.test(brandColor) && existsSync(cssPath)) {
+                  write('[update] Updating brand color...')
+                  const hex = brandColor.replace('#', '')
+                  const n = parseInt(hex, 16)
+                  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+                  const shift = (amt: number) => '#' + [
+                    Math.max(0, Math.min(255, Math.round(r + amt))),
+                    Math.max(0, Math.min(255, Math.round(g + amt))),
+                    Math.max(0, Math.min(255, Math.round(b + amt))),
+                  ].map((v: number) => v.toString(16).padStart(2, '0')).join('')
+                  const brand2 = shift(-20)
+                  const brand3 = shift(-40)
+                  const brandSoft = \`rgba(\${r}, \${g}, \${b}, 0.14)\`
+                  let css = readFileSync(cssPath, 'utf-8')
+                  css = css.replace(/--vp-c-brand-1:[^;]+;/, \`--vp-c-brand-1: \${brandColor};\`)
+                  css = css.replace(/--vp-c-brand-2:[^;]+;/, \`--vp-c-brand-2: \${brand2};\`)
+                  css = css.replace(/--vp-c-brand-3:[^;]+;/, \`--vp-c-brand-3: \${brand3};\`)
+                  css = css.replace(/--vp-c-brand-soft:[^;]+;/, \`--vp-c-brand-soft: \${brandSoft};\`)
+                  css = css.replace(/--dad-accent:[^;]+;/, \`--dad-accent: \${brandColor};\`)
+                  css = css.replace(/--dad-accent-dark:[^;]+;/, \`--dad-accent-dark: \${brand3};\`)
+                  writeFileSync(cssPath, css)
+                  write('[done] Brand color updated!')
+                } else {
+                  write('[done] Configuration saved.')
+                }
                 res.end()
-              })
+              }
             } catch (err: any) {
               res.setHeader('Content-Type', 'text/plain')
               res.write(\`[error] \${err.message}\\n\`)
@@ -871,7 +906,7 @@ async function runSync() {
 }
 
 async function saveSettings() {
-  if (!settingsToken.value.trim() || !settingsUrl.value.trim()) return
+  if (!settingsUrl.value.trim()) return
   settingsSyncing.value = true
   settingsLog.value = ''
   settingsStatus.value = ''
@@ -882,7 +917,7 @@ async function saveSettings() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        token: settingsToken.value.trim(),
+        token: settingsToken.value.trim() || undefined,
         url: settingsUrl.value.trim(),
         brandColor: settingsBrandColor.value.trim() || undefined
       })
@@ -976,7 +1011,6 @@ async function saveSettings() {
     Settings
     <span class="settings-chevron" :class="{ open: showSettings }">&#9656;</span>
   </button>
-
   <div v-if="showSettings" class="settings-form">
     <div class="settings-field">
       <label>Figma Access Token</label>
@@ -994,10 +1028,9 @@ async function saveSettings() {
         <div v-if="settingsBrandColor && /^#[0-9a-fA-F]{6}$/.test(settingsBrandColor)" :style="{ background: settingsBrandColor, width: '32px', height: '32px', borderRadius: '6px', border: '1px solid var(--vp-c-divider)', flexShrink: 0 }"></div>
       </div>
     </div>
-    <button class="settings-save" @click="saveSettings" :disabled="!settingsToken.trim() || !settingsUrl.trim() || settingsSyncing">
+    <button class="settings-save" @click="saveSettings" :disabled="!settingsUrl.trim() || settingsSyncing">
       {{ settingsSyncing ? 'Saving & Syncing...' : 'Save & Re-sync' }}
     </button>
-
     <div v-if="settingsLog" class="settings-log">
       <pre class="settings-log-output">{{ settingsLog }}</pre>
       <div v-if="settingsStatus === 'done'" class="sync-status sync-done">Reloading with updated content...</div>
@@ -1548,22 +1581,26 @@ function genComponentsOverview(groups, tokens) {
     const slug = slugify(g.name);
     // Find a representative image for this group
     let thumbImage = null;
+    let thumbIsVariantSet = false;
     for (const comp of g.components) {
       const imgKey = comp.name;
       if (componentImages[imgKey]) {
         thumbImage = '/' + componentImages[imgKey];
+        thumbIsVariantSet = comp.variants && comp.variants.length > 0;
         break;
       }
       // Try image field on the component
       if (comp.image) {
         thumbImage = '/' + comp.image;
+        thumbIsVariantSet = comp.variants && comp.variants.length > 0;
         break;
       }
     }
 
     if (thumbImage) {
+      const clipClass = thumbIsVariantSet ? ' clipped' : '';
       cards += `<a href="/components/${slug}" class="component-card">
-  <img :src="'${thumbImage}'" alt="${g.name}" />
+  <img :src="'${thumbImage}'" alt="${g.name}" class="${clipClass}" />
   <span>${g.name}</span>
 </a>\n`;
     } else {
@@ -1585,10 +1622,11 @@ Browse all component groups in the design system.
 ${cards}</div>
 
 <style>
-.component-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-top: 24px; }
-.component-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 12px; background: var(--vp-c-bg-soft); border: 1px solid var(--vp-c-divider); border-radius: 10px; text-decoration: none; color: var(--vp-c-text-1); transition: border-color 0.2s, background 0.2s; min-height: 120px; justify-content: center; }
+.component-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 24px; }
+.component-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 12px; background: var(--vp-c-bg-soft); border: 1px solid var(--vp-c-divider); border-radius: 10px; text-decoration: none; color: var(--vp-c-text-1); transition: border-color 0.2s, background 0.2s; min-height: 140px; justify-content: center; }
 .component-card:hover { border-color: var(--vp-c-brand-1); background: var(--vp-c-bg-mute); }
-.component-card img { max-width: 100%; max-height: 80px; object-fit: contain; border-radius: 4px; }
+.component-card img { max-width: 100%; max-height: 100px; object-fit: contain; border-radius: 4px; }
+.component-card img.clipped { clip-path: inset(4px round 4px); }
 .component-card span { font-size: 13px; font-weight: 600; text-align: center; }
 </style>
 `;
@@ -1707,10 +1745,11 @@ function genComponentGroupPage(group, tokens) {
 
     // Component demo with image
     const imgPath = componentImages[comp.name] || comp.image;
+    const isVariantSet = comp.variants && comp.variants.length > 0;
     if (imgPath) {
-      body += `<ComponentDemo title="${comp.name}" image="/${imgPath}" />\n\n`;
+      body += `<ComponentDemo title="${comp.name}" image="/${imgPath}"${isVariantSet ? ' :variant-set="true"' : ''} />\n\n`;
     } else {
-      body += `<ComponentDemo title="${comp.name}" />\n\n`;
+      body += `<ComponentDemo title="${comp.name}"${isVariantSet ? ' :variant-set="true"' : ''} />\n\n`;
     }
 
     // Description

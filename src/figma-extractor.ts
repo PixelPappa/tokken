@@ -861,7 +861,7 @@ class FigmaExtractor {
         variants: data.variants,
         properties,
         setName: data.meta.name,
-        nodeId: data.variantNodeIds[0] || setId, // Use first variant for clean image (avoids component set frame border)
+        nodeId: setId, // Use the component set frame (shows all variants; border clipped in CSS)
         styles,
         group,
       });

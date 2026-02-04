@@ -3,6 +3,7 @@ defineProps<{
   title: string
   image?: string
   description?: string
+  variantSet?: boolean
 }>()
 </script>
 
@@ -15,7 +16,7 @@ defineProps<{
     <div class="comp-demo-body">
       <div class="comp-preview">
         <slot name="preview">
-          <img v-if="image" :src="image" :alt="title" loading="lazy" />
+          <img v-if="image" :src="image" :alt="title" loading="lazy" :class="{ clipped: variantSet }" />
           <span v-else class="no-preview">No preview available</span>
         </slot>
       </div>
@@ -50,33 +51,24 @@ defineProps<{
   margin-top: 4px;
 }
 .comp-demo-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-@media (max-width: 768px) {
-  .comp-demo-body {
-    grid-template-columns: 1fr;
-  }
+  display: flex;
+  flex-direction: column;
 }
 .comp-preview {
-  padding: 24px;
+  padding: 32px;
   background: var(--dad-bg-elevated);
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 180px;
-  border-right: 1px solid var(--dad-border);
-}
-@media (max-width: 768px) {
-  .comp-preview {
-    border-right: none;
-    border-bottom: 1px solid var(--dad-border);
-  }
+  min-height: 300px;
 }
 .comp-preview img {
   max-width: 100%;
-  max-height: 400px;
+  max-height: 720px;
   object-fit: contain;
+}
+.comp-preview img.clipped {
+  clip-path: inset(4px round 4px);
 }
 .no-preview {
   font-size: 13px;

@@ -4,3 +4,5 @@ dist/
 figma-export/
 *.log
 .DS_Store
+
+.tokken/
