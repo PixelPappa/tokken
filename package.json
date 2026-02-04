@@ -28,6 +28,14 @@
     "css",
     "tokens"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PixelPappa/tokken.git"
+  },
+  "homepage": "https://github.com/PixelPappa/tokken",
+  "bugs": {
+    "url": "https://github.com/PixelPappa/tokken/issues"
+  },
   "author": "",
   "license": "AGPL-3.0",
   "dependencies": {
