@@ -64,7 +64,7 @@ async function run() {
   // --- Step 1: Extract ---
   console.log('=== Step 1: Extracting from Figma ===\n');
 
-  const extractorPath = path.join(__dirname, '..', 'figma-extractor.ts');
+  const extractorPath = path.join(__dirname, '..', '..', 'dist', 'figma-extractor.js');
   const { default: FigmaExtractor } = await import(extractorPath);
 
   const fileKey = FigmaExtractor.extractFileKey(figmaUrl);

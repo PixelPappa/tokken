@@ -68,7 +68,7 @@ async function run() {
 
   // Dynamic import of FigmaExtractor (TypeScript, needs tsx)
   // We use the compiled version or tsx to run it
-  const extractorPath = path.join(__dirname, '..', 'figma-extractor.ts');
+  const extractorPath = path.join(__dirname, '..', '..', 'dist', 'figma-extractor.js');
 
   // Import FigmaExtractor - tsx handles the TS compilation
   const { default: FigmaExtractor } = await import(extractorPath);
