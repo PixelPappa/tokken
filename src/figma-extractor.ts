@@ -780,7 +780,7 @@ class FigmaExtractor {
     }
 
     // Group components by their component set
-    const setComponents = new Map<string, { meta: any; variants: string[] }>();
+    const setComponents = new Map<string, { meta: any; variants: string[]; variantNodeIds: string[] }>();
     const standaloneComponents: ExtractedComponent[] = [];
 
     for (const [nodeId, meta] of Object.entries(componentsMeta)) {
@@ -796,10 +796,12 @@ class FigmaExtractor {
         const existing = setComponents.get(meta.componentSetId);
         if (existing) {
           existing.variants.push(meta.name);
+          existing.variantNodeIds.push(nodeId);
         } else {
           setComponents.set(meta.componentSetId, {
             meta: setMeta || { name: meta.name.split('/')[0], description: '' },
             variants: [meta.name],
+            variantNodeIds: [nodeId],
           });
         }
       } else {
@@ -859,7 +861,7 @@ class FigmaExtractor {
         variants: data.variants,
         properties,
         setName: data.meta.name,
-        nodeId: setId, // Use the component set node for image export (shows all variants)
+        nodeId: data.variantNodeIds[0] || setId, // Use first variant for clean image (avoids component set frame border)
         styles,
         group,
       });

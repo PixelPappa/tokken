@@ -778,34 +778,36 @@ const displayName = computed(() => {
   } catch { return 'Figma File' }
 })
 
-function showReloadOverlay() {
-  if (document.getElementById('sync-reload-overlay')) return
-  const s = document.createElement('style')
-  s.textContent = '@keyframes _rs{to{transform:rotate(360deg)}}'
-  document.head.appendChild(s)
-  const el = document.createElement('div')
-  el.id = 'sync-reload-overlay'
-  el.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#1b1b1f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px'
-  el.innerHTML = '<div style="width:36px;height:36px;border:3px solid rgba(255,255,255,0.1);border-top-color:#646cff;border-radius:50%;animation:_rs .8s linear infinite"></div><div style="color:rgba(255,255,255,0.8);font-size:14px;font-family:system-ui,sans-serif">Reloading with updated content\\u2026</div>'
-  document.body.appendChild(el)
-}
-
-async function waitForServer() {
-  showReloadOverlay()
-  for (let i = 0; i < 90; i++) {
-    await new Promise(r => setTimeout(r, 500))
+function startReloadPolling() {
+  if (window.__tokkenPoll) return
+  if (!document.getElementById('sync-reload-overlay')) {
+    const s = document.createElement('style')
+    s.textContent = '@keyframes _rs{to{transform:rotate(360deg)}}'
+    document.head.appendChild(s)
+    const el = document.createElement('div')
+    el.id = 'sync-reload-overlay'
+    el.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#1b1b1f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px'
+    el.innerHTML = '<div style="width:36px;height:36px;border:3px solid rgba(255,255,255,0.1);border-top-color:#646cff;border-radius:50%;animation:_rs .8s linear infinite"></div><div style="color:rgba(255,255,255,0.8);font-size:14px;font-family:system-ui,sans-serif">Reloading with updated content\\u2026</div>'
+    document.body.appendChild(el)
+  }
+  let attempts = 0
+  window.__tokkenPoll = window.setInterval(async () => {
+    attempts++
+    if (attempts > 120) {
+      clearInterval(window.__tokkenPoll)
+      window.__tokkenPoll = null
+      document.getElementById('sync-reload-overlay')?.remove()
+      return
+    }
     try {
       const r = await fetch('/', { cache: 'no-store' })
       if (r.ok) {
-        await new Promise(r => setTimeout(r, 2000))
-        location.reload()
-        return
+        clearInterval(window.__tokkenPoll)
+        window.__tokkenPoll = null
+        window.location.href = window.location.origin + '/'
       }
     } catch {}
-  }
-  document.getElementById('sync-reload-overlay')?.remove()
-  syncLog.value += '[error] Server did not come back. Refresh manually.\\n'
-  syncStatus.value = 'error'
+  }, 1000)
 }
 
 async function runSync() {
@@ -835,7 +837,7 @@ async function runSync() {
 
     if (syncLog.value.includes('[done]')) {
       syncStatus.value = 'done'
-      await waitForServer()
+      startReloadPolling()
     } else if (syncLog.value.includes('[error]')) {
       syncStatus.value = 'error'
     }
@@ -843,7 +845,7 @@ async function runSync() {
     if (syncLog.value.includes('Extraction complete') || syncLog.value.includes('generating site')) {
       syncStatus.value = 'done'
       syncLog.value += '[done] Sync complete!\\n'
-      await waitForServer()
+      startReloadPolling()
     } else if (!syncLog.value) {
       syncStatus.value = 'unavailable'
     } else {
@@ -884,14 +886,14 @@ async function saveSettings() {
 
     if (settingsLog.value.includes('[done]')) {
       settingsStatus.value = 'done'
-      await waitForServer()
+      startReloadPolling()
     } else if (settingsLog.value.includes('[error]')) {
       settingsStatus.value = 'error'
     }
   } catch (err) {
     if (settingsLog.value.includes('Extraction complete')) {
       settingsStatus.value = 'done'
-      await waitForServer()
+      startReloadPolling()
     } else {
       settingsStatus.value = 'error'
       settingsLog.value += '\\n[error] ' + (err.message || 'Connection failed')
